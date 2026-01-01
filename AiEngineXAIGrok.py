@@ -17,7 +17,7 @@ The SDK documentation can be found at: https://docs.x.ai/
 import hashlib
 import os
 import json
-import PromptImageTagging as pit
+from . import PromptImageTagging as pit
 from typing import Any, List, Optional
 from pydantic import BaseModel, create_model
 
@@ -262,7 +262,7 @@ def _grok_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, to
     print(f"Error calling xAI Grok API: {e}")
 
     # Check for content policy violation
-    from ContentViolationHandler import is_content_violation_xai
+    from .ContentViolationHandler import is_content_violation_xai
     if is_content_violation_xai(e):
       print("CONTENT VIOLATION DETECTED (xAI Grok)")
       if structure is not None:

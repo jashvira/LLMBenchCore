@@ -21,7 +21,7 @@ The Bedrock documentation: https://docs.aws.amazon.com/bedrock/latest/userguide/
 import hashlib
 import os
 import json
-import PromptImageTagging as pit
+from . import PromptImageTagging as pit
 from typing import Any, List, Optional
 from pydantic import BaseModel, create_model
 
@@ -393,7 +393,7 @@ def _bedrock_ai_hook(prompt: str, structure: Optional[dict], model: str, reasoni
     print(f"AWS Bedrock client error: {error_message}")
 
     # Check for content policy violation
-    from ContentViolationHandler import is_content_violation_bedrock
+    from .ContentViolationHandler import is_content_violation_bedrock
     if is_content_violation_bedrock(err):
       print("CONTENT VIOLATION DETECTED (Bedrock)")
       if structure is not None:
@@ -410,7 +410,7 @@ def _bedrock_ai_hook(prompt: str, structure: Optional[dict], model: str, reasoni
     print(f"Error calling Amazon Bedrock API: {e}")
 
     # Check for content policy violation
-    from ContentViolationHandler import is_content_violation_bedrock
+    from .ContentViolationHandler import is_content_violation_bedrock
     if is_content_violation_bedrock(e):
       print("CONTENT VIOLATION DETECTED (Bedrock)")
       if structure is not None:

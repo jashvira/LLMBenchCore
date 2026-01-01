@@ -18,7 +18,7 @@ Responses API reference: https://platform.openai.com/docs/api-reference/response
 import hashlib
 import os
 import json
-import PromptImageTagging as pit
+from . import PromptImageTagging as pit
 
 
 class OpenAIEngine:
@@ -248,7 +248,7 @@ def _openai_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, 
     print(f"Error calling OpenAI API: {e}")
 
     # Check for content policy violation
-    from ContentViolationHandler import is_content_violation_openai
+    from .ContentViolationHandler import is_content_violation_openai
     if is_content_violation_openai(e):
       print("CONTENT VIOLATION DETECTED (OpenAI)")
       if structure is not None:

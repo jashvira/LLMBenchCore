@@ -6,7 +6,7 @@ import datetime
 import time
 import random
 
-from ContentViolationHandler import (is_prompt_blocked, block_prompt, is_violation_response)
+from .ContentViolationHandler import (is_prompt_blocked, block_prompt, is_violation_response)
 
 # Global flag to bypass cache reading (still writes to cache)
 FORCE_REFRESH = False

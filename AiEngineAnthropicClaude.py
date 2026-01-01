@@ -15,7 +15,7 @@ The SDK documentation can be found at: https://github.com/anthropics/anthropic-s
 """
 
 import os, json, hashlib
-import PromptImageTagging as pit
+from . import PromptImageTagging as pit
 
 
 class ClaudeEngine:
@@ -216,7 +216,7 @@ def _claude_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, 
     print(f"Error calling Claude API: {e}")
 
     # Check for content policy violation
-    from ContentViolationHandler import is_content_violation_anthropic
+    from .ContentViolationHandler import is_content_violation_anthropic
     if is_content_violation_anthropic(e):
       print("CONTENT VIOLATION DETECTED (Anthropic)")
       if structure is not None:

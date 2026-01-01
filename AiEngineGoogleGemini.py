@@ -17,7 +17,7 @@ The SDK documentation can be found at: https://googleapis.github.io/python-genai
 import hashlib
 import os
 import json
-import PromptImageTagging as pit
+from . import PromptImageTagging as pit
 import time
 import threading
 import queue
@@ -400,7 +400,7 @@ Return ONLY the JSON object, no markdown formatting, no code blocks, no explanat
     print(f"Error calling Gemini API: {e}")
 
     # Check for content policy violation
-    from ContentViolationHandler import is_content_violation_gemini
+    from .ContentViolationHandler import is_content_violation_gemini
     if is_content_violation_gemini(error=e):
       print("CONTENT VIOLATION DETECTED (Gemini)")
       if structure is not None:
