@@ -1,0 +1,227 @@
+# LLMBenchCore
+
+An abstract base framework for benchmarking Large Language Models (LLMs) across multiple AI providers.
+
+## Overview
+
+LLMBenchCore provides the core infrastructure for creating domain-specific LLM benchmarks. It handles:
+
+- **Multi-provider AI engine abstraction** - Unified interface for OpenAI, Anthropic Claude, Google Gemini, xAI Grok, and Amazon Bedrock
+- **Test orchestration** - Parallel and sequential test execution with subpass support
+- **Response caching** - Intelligent caching to avoid redundant API calls
+- **Result reporting** - Automatic HTML report generation with graphs and detailed breakdowns
+- **Structured output** - JSON schema validation for structured responses
+- **Tool support** - Web search, code execution, and custom tools where available
+
+This repository is designed to be consumed as a dependency by domain-specific benchmarks (e.g., spatial/geometry benchmarks).
+
+## Supported AI Providers
+
+| Provider | Engine File | Models |
+|----------|-------------|--------|
+| OpenAI | `AiEngineOpenAiChatGPT.py` | GPT-5 series |
+| Anthropic | `AiEngineAnthropicClaude.py` | Claude Sonnet/Opus 4.5 |
+| Google | `AiEngineGoogleGemini.py` | Gemini 2.5/3 series |
+| xAI | `AiEngineXAIGrok.py` | Grok 2/4 series |
+| Amazon Bedrock | `AiEngineAmazonBedrock.py` | Qwen, Llama, Mistral, Nova |
+
+## Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+### API Keys
+
+Set the appropriate environment variables for the providers you want to use:
+
+```bash
+# OpenAI
+export OPENAI_API_KEY=your_key_here
+
+# Anthropic
+export ANTHROPIC_API_KEY=your_key_here
+
+# Google Gemini
+export GEMINI_API_KEY=your_key_here
+
+# xAI Grok
+export XAI_API_KEY=your_key_here
+
+# Amazon Bedrock (use AWS credentials)
+export AWS_ACCESS_KEY_ID=your_access_key
+export AWS_SECRET_ACCESS_KEY=your_secret_key
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+## Usage
+
+### Creating a Custom Benchmark
+
+Subclass `BenchmarkRunner` from `TestRunner.py`:
+
+```python
+from TestRunner import BenchmarkRunner, run_benchmark_main
+
+class MyBenchmark(BenchmarkRunner):
+    def get_benchmark_title(self) -> str:
+        return "My Custom LLM Benchmark"
+    
+    def get_benchmark_subtitle(self) -> str:
+        return "Testing domain-specific capabilities"
+    
+    # Optional: Add custom scoring
+    def can_handle_custom_scoring(self, test_globals: dict) -> bool:
+        return "my_custom_scorer" in test_globals
+    
+    def process_custom_scoring(self, index, subPass, result, test_globals, aiEngineName):
+        # Custom scoring logic
+        score = test_globals["my_custom_scorer"](result, subPass)
+        return {"score": score, "scoreExplanation": "Custom scored"}
+
+if __name__ == "__main__":
+    runner = MyBenchmark()
+    run_benchmark_main(runner, __file__)
+```
+
+### Writing Test Files
+
+Create numbered test files (`1.py`, `2.py`, etc.) in your benchmark directory:
+
+```python
+title = "Basic Math Test"
+
+prompt = """
+What is 2 + 2? Respond with just the number.
+"""
+
+structure = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "integer"}
+    },
+    "required": ["answer"]
+}
+
+def gradeAnswer(result, subPass, aiEngineName):
+    if result.get("answer") == 4:
+        return 1.0, "Correct!"
+    return 0.0, f"Expected 4, got {result.get('answer')}"
+```
+
+### Running Benchmarks
+
+```bash
+# Run all tests on all available models
+python your_benchmark.py
+
+# Run specific tests
+python your_benchmark.py -t 1,2,3
+python your_benchmark.py -t 5-10
+
+# Run specific models
+python your_benchmark.py -m gpt-5-nano
+python your_benchmark.py -m "claude-*"
+
+# Run in parallel
+python your_benchmark.py --parallel
+
+# List available models
+python your_benchmark.py --list-models
+
+# Force bypass cache
+python your_benchmark.py --force
+
+# Offline mode (cache only)
+python your_benchmark.py --offline
+```
+
+## Architecture
+
+```
+LLMBenchCore/
+├── TestRunner.py           # Core benchmark runner framework
+├── CacheLayer.py           # Response caching system
+├── ContentViolationHandler.py  # Content policy violation handling
+├── PromptImageTagging.py   # Image embedding in prompts
+├── AiEngineOpenAiChatGPT.py    # OpenAI engine
+├── AiEngineAnthropicClaude.py  # Anthropic engine
+├── AiEngineGoogleGemini.py     # Google Gemini engine
+├── AiEngineXAIGrok.py          # xAI Grok engine
+├── AiEngineAmazonBedrock.py    # Amazon Bedrock engine
+└── AiEnginePlacebo.py          # Placebo engine for baselines
+```
+
+## Features
+
+### Reasoning Modes
+
+Most engines support configurable reasoning effort (0-10 scale):
+- **0/False**: Standard mode (fastest)
+- **1-3**: Low reasoning
+- **4-7**: Medium reasoning  
+- **8-10**: High reasoning (most thorough)
+
+### Tool Support
+
+Enable built-in tools like web search and code execution:
+```python
+configs.append({
+    "name": "gpt-5-nano-Tools",
+    "engine": "openai",
+    "base_model": "gpt-5-nano",
+    "reasoning": 5,
+    "tools": True,  # Enable all built-in tools
+    "env_key": "OPENAI_API_KEY"
+})
+```
+
+### Structured Output
+
+Use JSON schemas for validated responses:
+```python
+structure = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+    },
+    "required": ["answer", "confidence"]
+}
+```
+
+### Image Support
+
+Embed images in prompts using the `[[image:path]]` syntax:
+```python
+prompt = """
+Describe what you see in this image:
+[[image:images/test.png]]
+"""
+```
+
+## Placebo Engine
+
+For establishing human baselines, use the Placebo engine with pre-defined responses:
+
+```python
+from AiEnginePlacebo import set_placebo_data_provider
+
+def my_responses(question_num: int, subpass: int):
+    # Return pre-computed "correct" answers for baseline
+    responses = {
+        (1, 0): {"answer": 4},
+        (1, 1): {"answer": 8},
+    }
+    return responses.get((question_num, subpass))
+
+set_placebo_data_provider(my_responses)
+```
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

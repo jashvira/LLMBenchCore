@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmbenchcore"
+version = "0.1.0"
+description = "Abstract base framework for benchmarking Large Language Models"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Ashley Harris"}
+]
+keywords = ["llm", "benchmark", "ai", "testing", "openai", "anthropic", "gemini", "bedrock"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "matplotlib>=3.7.1",
+    "pandas>=2.0.0",
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+    "xai-sdk>=0.1.0",
+    "pydantic>=2.0.0",
+    "boto3>=1.34.0",
+    "google-genai>=1.0.0",
+    "filelock>=3.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "yapf",
+    "pytest",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/ashleyharris-maptek-com-au/LLMBenchCore"
+"Bug Tracker" = "https://github.com/ashleyharris-maptek-com-au/LLMBenchCore/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.yapf]
+based_on_style = "pep8"
+column_limit = 100
+indent_width = 2
+split_all_comma_separated_values = false
+each_dict_entry_on_separate_line = true
+continuation_indent_width = 2
