@@ -697,10 +697,17 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
   if not os.path.exists(str(index) + ".py"):
     raise StopIteration
 
+  t = time.time()
+
   try:
-    exec(open("" + str(index) + ".py", encoding="utf-8").read(), g)
+    code = open("" + str(index) + ".py", encoding="utf-8").read()
+    compiled = compile(code, "" + str(index) + ".py", "exec")
+    exec(compiled, g)
   except ImportError:
     print("Missing dependancy. Run 'pip install -r requirements.txt' before running!")
+
+  t2 = time.time()
+  if t2 - t > 1: print(f"Loading test {index} took {t2 - t:.2f} seconds")
 
   if "skip" in g and not UNSKIP:
     return {"average_score": 0, "total_score": 0, "subpass_count": 0, "subpass_results": []}
@@ -865,8 +872,9 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
 
     subpass_data["endProcessingTime"] = time.time()
 
-    # HACK: Propagate perfect scores to higher-grade models from same company
-    propogateUpwardsHack(aiEngineName, index, subPass, score)
+    if "extraGradeAnswerRuns" not in g:
+      # HACK: Propagate perfect scores to higher-grade models from same company
+      propogateUpwardsHack(aiEngineName, index, subPass, score)
 
     return score, subpass_data
 
@@ -936,17 +944,39 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
         subpass_results[subPass] = subpass_data
 
   if "extraGradeAnswerRuns" in g:
-    extraGradeAnswerRuns = g["extraGradeAnswerRuns"]
+    extraGradeAnswerRuns: list = g["extraGradeAnswerRuns"]
+    if 0 in extraGradeAnswerRuns:
+      extraGradeAnswerRuns.remove(0)
+    gotAZero = False
     for subPass in extraGradeAnswerRuns:
+      if gotAZero:
+        subpass_data = {}
+        subpass_data["score"] = 0
+        subpass_data["subpass"] = subPass
+        subpass_data["scoreExplanation"] = "Skipped due to earlier zero score."
+        subpass_data["output_nice"] = "Skipped due to earlier zero score"
+        subpass_results.append(subpass_data)
+        continue
+
+      print(f"Running extra subpass {subPass} for grading with engine {aiEngineName}")
       subpass_data = {}
+      start = time.time()
       score, explanation = g["gradeAnswer"](results[0], subPass, aiEngineName)
+      execution_time = time.time() - start
+      if execution_time > 1: print(f"Grade Answer {subPass} took {execution_time:.2f}s")
+
+      if score <= 0:
+        gotAZero = True
       totalScore += score
       subpass_data["score"] = score
       subpass_data["subpass"] = subPass
       subpass_data["scoreExplanation"] = explanation
+      report_start = time.time()
       subpass_data["output_nice"] = g["resultToNiceReport"](results[0], subPass, aiEngineName)
+      report_time = time.time() - report_start
+      if report_time > 1: print(f"Result to nice report {subPass} took {report_time:.2f}s")
       subpass_results.append(subpass_data)
-
+      print()
   return {
     "average_score": totalScore / len(results) if results else 0,
     "total_score": max(0, totalScore),
@@ -1030,6 +1060,13 @@ h2 { color: var(--text-secondary); margin-top: 30px; }
   longestProcessor = (None, None), 0
 
   while True:
+    test_will_run = test_filter is None or testIndex in test_filter
+    if not test_will_run:
+      if not os.path.exists(str(testIndex) + ".py"):
+        break
+      testIndex += 1
+      continue
+
     print("\n" + "=" * 60)
     print(f"TEST {testIndex} START")
     print("=" * 60)
