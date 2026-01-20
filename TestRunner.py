@@ -610,9 +610,15 @@ def run_benchmark_main(runner: BenchmarkRunner, script_file: str = None) -> None
 
     for pattern in patterns:
       if '*' in pattern or '?' in pattern:
-        matches = [
-          name for name in all_model_names if fnmatch.fnmatch(name.lower(), pattern.lower())
-        ]
+        if pattern.startswith("^"):
+          matches = [
+            name for name in all_model_names
+            if not fnmatch.fnmatch(name.lower(), pattern[1:].lower())
+          ]
+        else:
+          matches = [
+            name for name in all_model_names if fnmatch.fnmatch(name.lower(), pattern.lower())
+          ]
         if not matches:
           print(f"Warning: Pattern '{pattern}' did not match any models")
         matched_models.update(matches)
