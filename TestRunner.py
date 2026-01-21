@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Optional, Set
 from abc import ABC, abstractmethod
 import os
 import base64
+import hashlib
 import html
 import time
 import argparse
@@ -109,7 +110,7 @@ class BenchmarkRunner(ABC):
         aiEngineName: Name of the AI engine
         
     Returns:
-        Dict with keys: score, output_image, output_mouseover_image, 
+        Dict with keys: score, output_image, output_additional_images, 
         reference_image, temp_dir, scoreExplanation, output_hyperlink
     """
     return {"score": 0, "scoreExplanation": "Custom scoring not implemented"}
@@ -929,7 +930,7 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
       score = comparison_result["score"]
       subpass_data["score"] = score
       subpass_data["output_image"] = comparison_result.get("output_image")
-      subpass_data["output_mouseover_image"] = comparison_result.get("output_mouseover_image")
+      subpass_data["output_additional_images"] = comparison_result.get("output_additional_images")
       subpass_data["reference_image"] = comparison_result.get("reference_image")
       subpass_data["temp_dir"] = comparison_result.get("temp_dir")
       subpass_data["scoreExplanation"] = comparison_result.get("scoreExplanation")
@@ -1383,20 +1384,69 @@ h2 { color: var(--text-secondary); margin-top: 30px; }
 
         if "output_hyperlink" in subpass and subpass['output_hyperlink']:
           results_file.write(f"<a href='{subpass['output_hyperlink']}'>")
-        if ('output_mouseover_image' in subpass and subpass['output_mouseover_image']
-            and os.path.exists(subpass['output_mouseover_image'])
+        if ('output_additional_images' in subpass and subpass['output_additional_images']
+            and os.path.exists(subpass['output_additional_images'][0])
             and os.path.exists(subpass['output_image'])):
-          with open(subpass['output_image'], 'rb') as img_file:
-            img_data = base64.b64encode(img_file.read()).decode('utf-8')
-          with open(subpass['output_mouseover_image'], 'rb') as img_file:
-            img_data2 = base64.b64encode(img_file.read()).decode('utf-8')
+          # Build list of all images (main + additional)
+          all_images = [subpass['output_image']] + [
+            img for img in subpass['output_additional_images'] if os.path.exists(img)
+          ]
+          img_data_list = []
+          for img_path in all_images:
+            with open(img_path, 'rb') as img_file:
+              img_data_list.append(base64.b64encode(img_file.read()).decode('utf-8'))
 
-          results_file.write(f"""
-                    <img src='data:image/png;base64,{img_data}' 
-                      data-mouseout='data:image/png;base64,{img_data}'
-                      data-mouseover='data:image/png;base64,{img_data2}'
-                      alt='Output' onmouseover="this.src=this.dataset.mouseover" onmouseout="this.src=this.dataset.mouseout">
-                    """)
+          # Generate unique viewer ID
+          viewer_id = f"flickbook-{hashlib.md5(subpass['output_image'].encode()).hexdigest()[:12]}"
+          radio_name = f"{viewer_id}-view"
+
+          # Build radio inputs (hidden)
+          inputs_html = []
+          for idx in range(len(img_data_list)):
+            checked = " checked" if idx == 0 else ""
+            inputs_html.append(
+              f'<input type="radio" name="{radio_name}" id="{viewer_id}-{idx}"{checked}>')
+
+          # Build prev/next labels
+          labels_html = []
+          for idx in range(len(img_data_list)):
+            prev_idx = (idx - 1) % len(img_data_list)
+            next_idx = (idx + 1) % len(img_data_list)
+            labels_html.append(
+              f'<label class="fb-prev prev-{idx}" for="{viewer_id}-{prev_idx}">&#8592;</label>')
+            labels_html.append(
+              f'<label class="fb-next next-{idx}" for="{viewer_id}-{next_idx}">&#8594;</label>')
+
+          # Build image tags
+          image_tags = []
+          for idx, img_b64 in enumerate(img_data_list):
+            image_tags.append(
+              f'<img src="data:image/png;base64,{img_b64}" class="fb-view view-{idx}" alt="Output">'
+            )
+
+          # Build CSS rules
+          style_lines = [
+            f'#{viewer_id} {{ display:flex; align-items:center; gap:8px; }}',
+            f'#{viewer_id} input[type="radio"] {{ display:none; }}',
+            f'#{viewer_id} .fb-frame {{ flex:1; text-align:center; order:1; }}',
+            f'#{viewer_id} .fb-prev {{ order:0; cursor:pointer; font-size:18px; display:none; user-select:none; }}',
+            f'#{viewer_id} .fb-next {{ order:2; cursor:pointer; font-size:18px; display:none; user-select:none; }}',
+            f'#{viewer_id} .fb-view {{ display:none; max-width:100%; }}',
+          ]
+          for idx in range(len(img_data_list)):
+            style_lines.append(
+              f'#{viewer_id}-{idx}:checked ~ .fb-frame .view-{idx} {{ display:block; }}')
+            style_lines.append(
+              f'#{viewer_id}-{idx}:checked ~ .prev-{idx} {{ display:inline-flex; }}')
+            style_lines.append(
+              f'#{viewer_id}-{idx}:checked ~ .next-{idx} {{ display:inline-flex; }}')
+
+          results_file.write(f'<div id="{viewer_id}" class="flickbook-viewer">'
+                             f'<style>{" ".join(style_lines)}</style>'
+                             f'{"".join(inputs_html)}'
+                             f'{"".join(labels_html)}'
+                             f'<div class="fb-frame">{"".join(image_tags)}</div>'
+                             f'</div>')
 
         elif os.path.exists(subpass['output_image']):
           try:
