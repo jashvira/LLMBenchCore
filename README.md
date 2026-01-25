@@ -202,21 +202,24 @@ Describe what you see in this image:
 
 ## Placebo Engine
 
-For establishing human baselines, use the Placebo engine with pre-defined responses:
+Use the Placebo engine with pre-defined responses to create configurable baselines:
 
 ```python
 from AiEnginePlacebo import set_placebo_data_provider
 
-def my_responses(question_num: int, subpass: int):
-    # Return pre-computed "correct" answers for baseline
+def my_responses(model_name: str, question_num: int, subpass: int):
     responses = {
-        (1, 0): {"answer": 4},
-        (1, 1): {"answer": 8},
+        ("baseline-positive", 1, 0): ({"answer": 4}, "Expected positive result"),
+        ("baseline-negative", 1, 0): ({"answer": 5}, "Expected negative result"),
     }
-    return responses.get((question_num, subpass))
+    return responses.get((model_name, question_num, subpass), (None, ""))
 
 set_placebo_data_provider(my_responses)
 ```
+
+Configure multiple placebo models by setting the `PLACEBO_MODELS` environment variable
+to a comma-separated list of model names, or by adding configs manually with
+`engine: "placebo"` in your runner overrides.
 
 ## License
 

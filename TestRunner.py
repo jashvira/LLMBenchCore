@@ -29,6 +29,13 @@ FORCE_ARG = False
 _current_runner = None
 
 
+def is_placebo_model(model_name: str) -> bool:
+  for cfg in ALL_MODEL_CONFIGS:
+    if cfg.get("name") == model_name:
+      return cfg.get("engine") == "placebo"
+  return False
+
+
 class BenchmarkRunner(ABC):
   """
   Abstract base class for benchmark runners.
@@ -179,12 +186,8 @@ def get_default_model_configs() -> List[Dict[str, Any]]:
   """
   configs = []
 
-  # Human with tools (Placebo)
-  configs.append({
-    "name": "Human with tools",
-    "engine": "placebo",
-    "env_key": None,
-  })
+  from .AiEnginePlacebo import get_placebo_model_configs
+  configs.extend(get_placebo_model_configs())
 
   # OpenAI models
   openai_base_models = ["gpt-5-nano", "gpt-5-mini", "gpt-5.1", "gpt-5.2", "gpt-5.2-pro"]
@@ -655,7 +658,7 @@ def checkSavedPromptCache(aiEngineName: str, index: int, subPass: int, prompt: s
   if not os.path.exists(prompt_file) or not os.path.exists(result_file):
     return None
 
-  if aiEngineName == "Human with tools":
+  if is_placebo_model(aiEngineName):
     return None
 
   # Check both FORCE_ARG and the module's FORCE_REFRESH for robustness
@@ -871,7 +874,7 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
 
   # In placebo mode, make sure we test all the grading functions even if the questions are currently
   # too hard for me to create an answer.
-  if aiEngineName == "Placebo":
+  if is_placebo_model(aiEngineName):
     first_result = next((r for r in results if r is not None), None)
     if first_result is not None:
       results = [r if r is not None else first_result for r in results]
@@ -1029,7 +1032,7 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
           results[idx] = future.result()
 
       # In placebo mode, fill in missing results
-      if aiEngineName == "Placebo":
+      if is_placebo_model(aiEngineName):
         first_result = next((r for r in results if r is not None), None)
         if first_result is not None:
           results = [r if r is not None else first_result for r in results]
@@ -1734,19 +1737,24 @@ window.VizManager = (function() {
     plt.close()
 
     best_engine, best_score = engine_scores[0] if engine_scores else ("", 0)
-    if best_engine == "Human with tools":
-      best_engine, best_score = engine_scores[1] if len(engine_scores) > 1 else ("", 0)
+    if is_placebo_model(best_engine):
+      best_engine, best_score = next(
+        ((name, score) for name, score in engine_scores if not is_placebo_model(name)),
+        ("", 0),
+      )
 
-    humanScore = 0
-    if "Human with tools" in [e[0] for e in engine_scores]:
-      humanScore = [e[1] for e in engine_scores if e[0] == "Human with tools"][0]
+    placebo_scores = [(name, score) for name, score in engine_scores if is_placebo_model(name)]
+    placebo_engine, placebo_score = ("", 0)
+    if placebo_scores:
+      placebo_engine, placebo_score = max(placebo_scores, key=lambda item: item[1])
 
     question_graphs[q_num] = {
       "title": question_title,
       "filename": filename,
       "max": max_score,
       "best_engine": best_engine,
-      "human_score": humanScore,
+      "placebo_score": placebo_score,
+      "placebo_engine": placebo_engine,
       "best_pct": best_score * 100
     }
 
@@ -1978,32 +1986,41 @@ window.VizManager = (function() {
 
         exec(open("" + str(q_num) + ".py", encoding="utf-8").read(), g)
 
-        if question_graphs[q_num]['human_score']:
-          humanRatio = question_graphs[q_num]['best_pct'] /\
-            (question_graphs[q_num]['human_score'] * 100)
-          humanCompare = "No Data"
-          if humanRatio < 0.3:
-            humanCompare = "<p style='color:#0f0'> Human is considerably better</p>"
-          elif humanRatio < 0.9:
-            humanCompare = "<p style='color:#0f0'> Human is better</p>"
-          elif humanRatio < 0.99:
-            humanCompare = "<p style='color:#0f0'> Human is marginally better</p>"
-          elif humanRatio < 1.01:
-            if question_graphs[q_num]['human_score'] == 0:
-              humanCompare = "<p style='color:#ff0'>Neither human nor AI have solved this.</p>"
-            elif question_graphs[q_num]['human_score'] == 1:
-              humanCompare = "<p style='color:#ff0'> Human and the best AI have both mastered this.</p>"
+        if question_graphs[q_num]['placebo_score']:
+          placebo_ratio = question_graphs[q_num]['best_pct'] /\
+            (question_graphs[q_num]['placebo_score'] * 100)
+          baseline_compare = "No Data"
+          if placebo_ratio < 0.3:
+            baseline_compare = "<p style='color:#0f0'> Placebo baseline is considerably better</p>"
+          elif placebo_ratio < 0.9:
+            baseline_compare = "<p style='color:#0f0'> Placebo baseline is better</p>"
+          elif placebo_ratio < 0.99:
+            baseline_compare = "<p style='color:#0f0'> Placebo baseline is marginally better</p>"
+          elif placebo_ratio < 1.01:
+            if question_graphs[q_num]['placebo_score'] == 0:
+              baseline_compare = "<p style='color:#ff0'>Neither placebo baseline nor AI have solved this.</p>"
+            elif question_graphs[q_num]['placebo_score'] == 1:
+              baseline_compare = "<p style='color:#ff0'> Placebo baseline and the best AI have both mastered this.</p>"
             else:
-              humanCompare = "<p style='color:#ff0'> Human and the best AI are equal.</p>"
-          elif humanRatio < 1.5:
-            humanCompare = f"<p style='color:#f00'> The best AI is marginally better. Human scored {question_graphs[q_num]['human_score'] * 100:.1f}% </p>"
+              baseline_compare = "<p style='color:#ff0'> Placebo baseline and the best AI are equal.</p>"
+          elif placebo_ratio < 1.5:
+            baseline_compare = (
+              "<p style='color:#f00'> The best AI is marginally better. "
+              f"Placebo baseline scored {question_graphs[q_num]['placebo_score'] * 100:.1f}% </p>"
+            )
           else:
-            humanCompare = f"<p style='color:#f00'> The best AI is considerably better. Human scored {question_graphs[q_num]['human_score'] * 100:.1f}%</p>"
+            baseline_compare = (
+              "<p style='color:#f00'> The best AI is considerably better. "
+              f"Placebo baseline scored {question_graphs[q_num]['placebo_score'] * 100:.1f}%</p>"
+            )
         else:
           if question_graphs[q_num]['best_pct'] == 0:
-            humanCompare = "<p style='color:#ff0'>Neither human nor AI have solved this.</p>"
+            baseline_compare = "<p style='color:#ff0'>Neither placebo baseline nor AI have solved this.</p>"
           else:
-            humanCompare = "<p style='color:#f00'> The best AI is considerably better, human scored 0 or hasn't attempted.</p>"
+            baseline_compare = (
+              "<p style='color:#f00'> The best AI is considerably better, "
+              "placebo baseline scored 0 or hasn't attempted.</p>"
+            )
 
         q_data = question_graphs[q_num]
         index_file.write(f"""
@@ -2012,7 +2029,7 @@ window.VizManager = (function() {
         <a name="q{q_num}"><h2 style="margin-top: 0;color:#fff">Q{q_num}: {html.escape(q_data['title'])}</h2></a>
         {g.get("highLevelSummary","")}
         <p style='clear:both'><strong>Best result:</strong> <a href="{html.escape(q_data['best_engine'])}.html#q{q_num}">{html.escape(q_data['best_engine'])}</a> ({q_data['best_pct']:.1f}%)</p>
-        {humanCompare}
+        {baseline_compare}
         <details>
             <summary style="cursor:pointer; color:#667eea;">Click to show comparison graph</summary>
             <img src="{q_data['filename']}" alt="Question {q_num} Results" style="margin-top:10px;">
@@ -2047,7 +2064,8 @@ def run_model_config(config: dict, test_filter: Optional[Set[int]] = None):
 
   if engine_type == "placebo":
     from .AiEnginePlacebo import PlaceboEngine
-    engine = PlaceboEngine()
+    placebo_id = config.get("placebo_id", name)
+    engine = PlaceboEngine(placebo_id)
     runAllTests(engine.AIHook, name, test_filter)
 
   elif engine_type == "openai":
