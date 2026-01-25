@@ -3,13 +3,15 @@ import inspect
 from typing import Optional, Union, Callable, Tuple
 
 # Placebo data provider - must be set by consuming benchmark
-_placebo_data_provider: Optional[
-  Callable[[str, int, int], Tuple[Optional[Union[dict, str]], str]]
-] = None
+_placebo_data_provider: Optional[Callable[[str, int, int], Tuple[Optional[Union[dict, str]],
+                                                                 str]]] = None
+
+_models = []
 
 
 def set_placebo_data_provider(
-    provider: Callable[[str, int, int], Tuple[Optional[Union[dict, str]], str]]) -> None:
+    models: list, provider: Callable[[str, int, int], Tuple[Optional[Union[dict, str]],
+                                                            str]]) -> None:
   """
   Set the placebo data provider function.
   
@@ -22,6 +24,8 @@ def set_placebo_data_provider(
                 an optional reasoning string.
   """
   global _placebo_data_provider
+  global _models
+  _models = models
   _placebo_data_provider = provider
 
 
@@ -45,9 +49,8 @@ class PlaceboEngine:
                      model_name: str, questionNum: int, subPass: int):
     signature = inspect.signature(provider)
     params = list(signature.parameters.values())
-    supports_varargs = any(
-      param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD) for param in params
-    )
+    supports_varargs = any(param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+                           for param in params)
     if supports_varargs or len(params) >= 3:
       return provider(model_name, questionNum, subPass)
     if len(params) == 2:
@@ -74,17 +77,8 @@ class PlaceboEngine:
 
 
 def get_placebo_model_configs() -> list:
-  """
-  Return placebo model configs from PLACEBO_MODELS env var.
-  """
-  import os
-
-  models_env = os.environ.get("PLACEBO_MODELS", "")
-  if not models_env.strip():
-    return []
-
   configs = []
-  for raw_name in models_env.split(","):
+  for raw_name in _models:
     name = raw_name.strip()
     if not name:
       continue

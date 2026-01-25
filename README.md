@@ -157,6 +157,7 @@ LLMBenchCore/
 ### Reasoning Modes
 
 Most engines support configurable reasoning effort (0-10 scale):
+
 - **0/False**: Standard mode (fastest)
 - **1-3**: Low reasoning
 - **4-7**: Medium reasoning  
@@ -165,6 +166,7 @@ Most engines support configurable reasoning effort (0-10 scale):
 ### Tool Support
 
 Enable built-in tools like web search and code execution:
+
 ```python
 configs.append({
     "name": "gpt-5-nano-Tools",
@@ -179,6 +181,7 @@ configs.append({
 ### Structured Output
 
 Use JSON schemas for validated responses:
+
 ```python
 structure = {
     "type": "object",
@@ -193,6 +196,7 @@ structure = {
 ### Image Support
 
 Embed images in prompts using the `[[image:path]]` syntax:
+
 ```python
 prompt = """
 Describe what you see in this image:
@@ -214,11 +218,11 @@ def my_responses(model_name: str, question_num: int, subpass: int):
     }
     return responses.get((model_name, question_num, subpass), (None, ""))
 
-set_placebo_data_provider(my_responses)
+set_placebo_data_provider(modelNames, my_responses)
 ```
 
-Configure multiple placebo models by setting the `PLACEBO_MODELS` environment variable
-to a comma-separated list of model names, or by adding configs manually with
+Configure multiple placebo models by setting the modelNames variable
+to a list of model names, or by adding configs manually with
 `engine: "placebo"` in your runner overrides.
 
 ## License
