@@ -122,7 +122,7 @@ class BenchmarkRunner(ABC):
     """
     return {"score": 0, "scoreExplanation": "Custom scoring not implemented"}
 
-  def run_setup_for_test(self, test_globals: dict) -> None:
+  def run_setup_for_test(self, test_index: int, test_globals: dict) -> None:
     """
     Run any custom setup needed for a test during --setup mode.
     Override to implement domain-specific setup (e.g., building reference models).
@@ -1016,10 +1016,18 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
 
       for subPass in range(resumeIndex, len(prompts)):
         subpass_results[subPass] = {
-          "subpass": subPass,
-          "score": earlyFailScore,
-          "scoreExplanation": "Skipped due to earlyFail (first subpass scored under 50%)"
+          "subpass":
+          subPass,
+          "score":
+          earlyFailScore,
+          "scoreExplanation":
+          f"Skipped due to earlyFail (first subpass scored under {earlyFailScore*100}%)"
         }
+    elif "singleThreaded" in g:
+      for i in range(resumeIndex, len(prompts)):
+        passScore, first_subpass_data = process_subpass(i, results[i])
+        totalScore += passScore
+        subpass_results[i] = first_subpass_data
     else:
       # First subpass passed, run remaining prompts in parallel
       with ThreadPoolExecutor() as executor:
@@ -1181,7 +1189,7 @@ h1 { color: var(--text-color); }
 h2 { color: var(--text-secondary); margin-top: 30px; }
 """)
   results_file.write("</style>\n<meta charset='UTF-8'/>\n")
-  
+
   # Add VizManager for WebGL context virtualization - only one active context at a time
   results_file.write("""
 <script>
@@ -2006,21 +2014,17 @@ window.VizManager = (function() {
           elif placebo_ratio < 1.5:
             baseline_compare = (
               "<p style='color:#f00'> The best AI is marginally better. "
-              f"Placebo baseline scored {question_graphs[q_num]['placebo_score'] * 100:.1f}% </p>"
-            )
+              f"Placebo baseline scored {question_graphs[q_num]['placebo_score'] * 100:.1f}% </p>")
           else:
             baseline_compare = (
               "<p style='color:#f00'> The best AI is considerably better. "
-              f"Placebo baseline scored {question_graphs[q_num]['placebo_score'] * 100:.1f}%</p>"
-            )
+              f"Placebo baseline scored {question_graphs[q_num]['placebo_score'] * 100:.1f}%</p>")
         else:
           if question_graphs[q_num]['best_pct'] == 0:
             baseline_compare = "<p style='color:#ff0'>Neither placebo baseline nor AI have solved this.</p>"
           else:
-            baseline_compare = (
-              "<p style='color:#f00'> The best AI is considerably better, "
-              "placebo baseline scored 0 or hasn't attempted.</p>"
-            )
+            baseline_compare = ("<p style='color:#f00'> The best AI is considerably better, "
+                                "placebo baseline scored 0 or hasn't attempted.</p>")
 
         q_data = question_graphs[q_num]
         index_file.write(f"""
@@ -2149,7 +2153,7 @@ def run_setup():
 
       # If there's custom setup needed, let the runner handle it
       if _current_runner:
-        _current_runner.run_setup_for_test(test_globals)
+        _current_runner.run_setup_for_test(test_index, test_globals)
 
       successful += 1
       print(f"    ✓ OK")
