@@ -68,7 +68,7 @@ class AzureOpenAIEngine:
 
   Configuration parameters:
   - model: Azure deployment name
-  - reasoning: False/0 or effort level (1-10)
+  - reasoning: False/0 or effort level string (e.g. "low", "medium", "high")
   - tools: False/True/custom tools list
   - endpoint: Azure OpenAI resource endpoint (or full responses URL)
   - api_version: Azure OpenAI api-version string
@@ -207,9 +207,6 @@ def _azure_openai_ai_hook(prompt: str, structure: dict | None, model: str, reaso
 
     # Azure uses deployment name for model
     model_to_use = model
-    if isinstance(reasoning, str) and reasoning:
-      # Allow override by deployment name if supplied as a string.
-      model_to_use = reasoning
 
     tools_converted = _convert_tools(tools)
 
@@ -250,7 +247,7 @@ def _azure_openai_ai_hook(prompt: str, structure: dict | None, model: str, reaso
 
     response_params = {"model": model_to_use, "input": input_value}
 
-    if isinstance(reasoning, int) and reasoning > 0:
+    if isinstance(reasoning, str) and reasoning:
       response_params["reasoning"] = {"effort": reasoning, "summary": "auto"}
 
     if structure is not None:
