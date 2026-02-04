@@ -226,7 +226,17 @@ def _claude_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, 
     #print(textOutput)
 
     if structure is not None:
-      return json.loads(textOutput), chainOfThought
+      try:
+        return json.loads(textOutput), chainOfThought
+      except Exception as e:
+        import json_repair
+        try:
+          repaired = json_repair.repair_json(textOutput)
+          return json.loads(repaired), chainOfThought
+        except:
+          print(f"Warning: Failed to parse JSON response: {e}")
+          print(f"Raw output was: {textOutput[:500]}")
+          return {}, f"Warning: Failed to parse JSON response: {e}" + chainOfThought
     else:
       return textOutput, chainOfThought
 

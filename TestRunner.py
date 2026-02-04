@@ -2156,7 +2156,7 @@ def run_model_config(config: dict, test_filter: Optional[Set[int]] = None):
     if not base_url:
       print(f"Skipping {name}: LLAMACPP_BASE_URL not set")
       return
-    engine = LlamaCppEngine(config["base_model"], base_url)
+    engine = LlamaCppEngine(config["base_model"], base_url, tools=config.get("tools", False))
     cacheLayer = cl(engine.configAndSettingsHash, engine.AIHook, name)
     runAllTests(cacheLayer.AIHook, name, test_filter)
 

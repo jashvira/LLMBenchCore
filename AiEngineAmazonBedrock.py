@@ -403,10 +403,16 @@ def _bedrock_ai_hook(prompt: str, structure: Optional[dict], model: str, reasoni
           parsed_obj = pydantic_model.model_validate_json(json_text)
           return parsed_obj.model_dump(), chainOfThought
         except Exception as e:
-          print(f"Warning: Failed to validate JSON response against schema: {e}")
-          print(f"Raw output was: {output_text[:500]}")
-          return {}, chainOfThought
-      return {}, chainOfThought
+          import json_repair
+          try:
+            repaired = json_repair.repair_json(json_text)
+            parsed_obj = pydantic_model.model_validate_json(repaired)
+            return parsed_obj.model_dump(), chainOfThought
+          except:
+            print(f"Warning: Failed to validate JSON response against schema: {e}")
+            print(f"Raw output was: {output_text[:500]}")
+            return {}, f"Warning: Failed to validate JSON response against schema: {e}" + chainOfThought
+      return {}, f"Warning: Failed to validate JSON response against schema: {e}" + chainOfThought
     else:
       return output_text or "", chainOfThought
 

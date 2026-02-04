@@ -21,8 +21,94 @@ The llama.cpp server documentation can be found at: https://github.com/ggerganov
 import hashlib
 import os
 import json
+import threading
 import requests
+import subprocess
+import tempfile
+import uuid
 from . import PromptImageTagging as pit
+
+
+PYTHON_CODE_TOOL = {
+  "type": "function",
+  "function": {
+    "name": "run_python_code",
+    "description": "Execute Python code and return the output. Use this to perform calculations, data processing, or any computation. The code runs in a fresh Python interpreter with access to standard libraries. Print statements will be captured as output.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "The Python code to execute. Use print() to output results."
+        }
+      },
+      "required": ["code"]
+    }
+  }
+}
+
+
+def execute_python_code(code: str, timeout: int = 60) -> str:
+  """
+  Execute Python code in a temporary file and return the output.
+  
+  Args:
+    code: Python code to execute
+    timeout: Maximum execution time in seconds
+    
+  Returns:
+    String containing stdout/stderr from execution
+  """
+  # Create a unique temp file
+  temp_dir = tempfile.gettempdir()
+  script_name = f"llmexec_{uuid.uuid4().hex[:8]}.py"
+  script_path = os.path.join(temp_dir, script_name)
+  
+  try:
+    # Write the code to temp file
+    with open(script_path, "w", encoding="utf-8") as f:
+      f.write(code)
+    
+    print(f"Executing Python code:")
+    print("\n> " + "\n> ".join(code.split("\n")))
+    
+    # Execute the script
+    result = subprocess.run(
+      ["python", script_path],
+      capture_output=True,
+      text=True,
+      timeout=timeout,
+      cwd=temp_dir
+    )
+    
+    # Combine stdout and stderr
+    output = ""
+    if result.stdout:
+      output += result.stdout
+    if result.stderr:
+      if output:
+        output += "\n"
+      output += f"STDERR:\n{result.stderr}"
+    
+    if result.returncode != 0:
+      output += f"\n[Exit code: {result.returncode}]"
+    
+    print(f"Code execution returned:")
+    print("\n< " + "\n< ".join(output.split("\n")))
+    
+    return output if output else "(No output)"
+    
+  except subprocess.TimeoutExpired:
+    return f"Error: Code execution timed out after {timeout} seconds"
+  except Exception as e:
+    return f"Error executing code: {str(e)}"
+  finally:
+    # Clean up temp file
+    try:
+      if os.path.exists(script_path):
+        os.remove(script_path)
+    except:
+      pass
 
 
 class LlamaCppEngine:
@@ -33,19 +119,23 @@ class LlamaCppEngine:
   - model: Model name/identifier (used for cache key, not sent to server unless needed)
   - base_url: Server URL (defaults to LLAMACPP_BASE_URL env var or http://localhost:8080)
   - timeout: Request timeout in seconds (default: 3600)
+  - tools: Tool capabilities:
+      - False: No tools available
+      - True: Enable Python code execution tool
   """
 
-  def __init__(self, model: str, base_url: str | None = None, timeout: int = 3600):
+  def __init__(self, model: str, base_url: str | None = None, timeout: int = 3600, tools=False):
     self.model = model
     self.base_url = base_url or os.environ.get("LLAMACPP_BASE_URL", "http://localhost:8080")
     self.timeout = timeout
+    self.tools = tools
     self.configAndSettingsHash = hashlib.sha256(
-      model.encode() + self.base_url.encode()
+      model.encode() + self.base_url.encode() + str(tools).encode()
     ).hexdigest()
 
   def AIHook(self, prompt: str, structure: dict | None) -> tuple:
     """Call the llama.cpp server with instance configuration."""
-    return _llamacpp_ai_hook(prompt, structure, self.model, self.base_url, self.timeout)
+    return _llamacpp_ai_hook(prompt, structure, self.model, self.base_url, self.timeout, self.tools)
 
 
 def build_llamacpp_messages(prompt: str) -> list[dict]:
@@ -92,9 +182,11 @@ def build_llamacpp_messages(prompt: str) -> list[dict]:
   return [{"role": "user", "content": content}]
 
 
+mutex = threading.Lock()
+
 def _llamacpp_ai_hook(prompt: str, structure: dict | None, model: str, base_url: str, 
-                      timeout: int) -> tuple:
-  """
+                      timeout: int, tools=False) -> tuple:
+ """
   This function is called by the test runner to get the AI's response to a prompt.
   
   Prompt is the question to ask the AI.
@@ -104,6 +196,7 @@ def _llamacpp_ai_hook(prompt: str, structure: dict | None, model: str, base_url:
   
   Returns tuple of (result, chainOfThought).
   """
+ with mutex: # No point spamming my low-end consumer GPU with multiple requests
   try:
     # Build the API endpoint URL
     api_url = f"{base_url.rstrip('/')}/v1/chat/completions"
@@ -121,8 +214,13 @@ def _llamacpp_ai_hook(prompt: str, structure: dict | None, model: str, base_url:
     if model:
       payload["model"] = model
     
-    # Handle structured output using JSON schema
-    if structure is not None:
+    # Add tools if enabled
+    if tools is True:
+      payload["tools"] = [PYTHON_CODE_TOOL]
+      payload["tool_choice"] = "auto"
+    
+    # Handle structured output using JSON schema (only if no tools, as they can conflict)
+    if structure is not None and not tools:
       # llama.cpp supports JSON schema via response_format
       payload["response_format"] = {
         "type": "json_schema",
@@ -141,43 +239,127 @@ def _llamacpp_ai_hook(prompt: str, structure: dict | None, model: str, base_url:
     if api_key:
       headers["Authorization"] = f"Bearer {api_key}"
     
-    response = requests.post(api_url, json=payload, headers=headers, timeout=timeout)
-    response.raise_for_status()
-    
-    result_json = response.json()
-    
-    # Extract the response content
-    choices = result_json.get("choices", [])
-    if not choices:
-      print("No choices in llama.cpp response")
-      if structure is not None:
-        return {}, ""
-      return "", ""
-    
-    message = choices[0].get("message", {})
-    output_text = message.get("content", "")
-    
-    # llama.cpp doesn't typically provide chain of thought separately
+    # Tool calling loop - continue until we get a final response (no tool calls)
     chainOfThought = ""
+    max_tool_iterations = 10
+    iteration = 0
     
-    # Parse structured output if requested
-    if structure is not None:
-      try:
-        # Strip markdown code blocks if present
-        parse_text = output_text
-        if "```json" in parse_text:
-          parse_text = parse_text.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in parse_text:
-          parse_text = parse_text.split("```", 1)[1].split("```", 1)[0]
+    while iteration < max_tool_iterations:
+      iteration += 1
+      
+      response = requests.post(api_url, json=payload, headers=headers, timeout=timeout)
+      response.raise_for_status()
+      
+      result_json = response.json()
+      
+      # Extract the response content
+      choices = result_json.get("choices", [])
+      if not choices:
+        print("No choices in llama.cpp response")
+        if structure is not None:
+          return {}, ""
+        return "", ""
+      
+      message = choices[0].get("message", {})
+      finish_reason = choices[0].get("finish_reason", "")
+      
+      # Check if the model wants to call tools
+      tool_calls = message.get("tool_calls", [])
+      
+      if tool_calls and finish_reason == "tool_calls":
+        # Process each tool call
+        # First, add the assistant's message with tool calls to conversation
+        payload["messages"].append(message)
         
-        parse_text = parse_text.strip()
-        return json.loads(parse_text), chainOfThought
-      except json.JSONDecodeError as e:
-        print(f"Failed to parse JSON response: {e}")
-        print(f"Raw response: {output_text}")
-        return {}, ""
-    else:
-      return output_text or "", chainOfThought
+        for tool_call in tool_calls:
+          tool_id = tool_call.get("id", f"call_{uuid.uuid4().hex[:8]}")
+          function = tool_call.get("function", {})
+          func_name = function.get("name", "")
+          func_args_str = function.get("arguments", "{}")
+          
+          try:
+            func_args = json.loads(func_args_str)
+          except json.JSONDecodeError:
+            func_args = {}
+          
+          # Execute the tool
+          if func_name == "run_python_code":
+            code = func_args.get("code", "")
+            tool_result = execute_python_code(code)
+            chainOfThought += f"\n[Tool: run_python_code]\n{code}\n[Output]\n{tool_result}\n"
+          else:
+            tool_result = f"Error: Unknown tool '{func_name}'"
+          
+          # Add tool result to messages
+          payload["messages"].append({
+            "role": "tool",
+            "tool_call_id": tool_id,
+            "content": tool_result
+          })
+        
+        # Continue the loop to get the next response
+        continue
+      
+      # No tool calls - this is the final response
+      output_text = message.get("content", "") or ""
+      
+      # Parse structured output if requested
+      if structure is not None:
+        # If tools were enabled, we need to ask the model to format as JSON
+        if tools:
+          # Add instruction for JSON output and make another call
+          schema_json = json.dumps(structure, indent=2)
+          payload["messages"].append({
+            "role": "user",
+            "content": f"Now provide your final answer as JSON matching this schema:\n{schema_json}\n\nReturn ONLY the JSON object, no explanation."
+          })
+          # Remove tools for final formatting call
+          payload.pop("tools", None)
+          payload.pop("tool_choice", None)
+          payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "response",
+              "strict": True,
+              "schema": structure
+            }
+          }
+          
+          format_response = requests.post(api_url, json=payload, headers=headers, timeout=timeout)
+          format_response.raise_for_status()
+          format_result = format_response.json()
+          
+          format_choices = format_result.get("choices", [])
+          if format_choices:
+            output_text = format_choices[0].get("message", {}).get("content", "")
+        
+        try:
+          # Strip markdown code blocks if present
+          parse_text = output_text
+          if "```json" in parse_text:
+            parse_text = parse_text.split("```json", 1)[1].split("```", 1)[0]
+          elif "```" in parse_text:
+            parse_text = parse_text.split("```", 1)[1].split("```", 1)[0]
+          
+          parse_text = parse_text.strip()
+          return json.loads(parse_text), chainOfThought
+        except json.JSONDecodeError as e:
+          import json_repair
+          try:
+            repaired = json_repair.repair_json(output_text)
+            return json.loads(repaired), chainOfThought
+          except:
+            print(f"Failed to parse JSON response: {e}")
+            print(f"Raw response: {output_text}")
+            return {}, chainOfThought
+      else:
+        return output_text or "", chainOfThought
+    
+    # Max iterations reached
+    print(f"Warning: Max tool iterations ({max_tool_iterations}) reached")
+    if structure is not None:
+      return {}, chainOfThought
+    return "", chainOfThought
     
   except requests.exceptions.Timeout:
     print(f"Timeout calling llama.cpp server at {base_url}")

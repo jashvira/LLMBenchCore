@@ -440,16 +440,27 @@ Return ONLY the JSON object matching the schema."""
               parsed_obj = pydantic_model.model_validate_json(json_text)
               return parsed_obj.model_dump(), chainOfThought
             except Exception as e:
-              print(f"Warning: Failed to parse JSON response: {e}")
-              print(f"Raw output was: {output_text[:500]}")
-              return {}, chainOfThought + "\n\nFailed to parse JSON.\n" + output_text
+              try:
+                import json_repair
+                repaired = json_repair.repair_json(json_text)
+                parsed_obj = pydantic_model.model_validate_json(repaired)
+                return parsed_obj.model_dump(), chainOfThought
+              except:
+                print(f"Warning: Failed to parse JSON response: {e}")
+                print(f"Raw output was: {output_text[:500]}")
+                return {}, chainOfThought + "\n\nFailed to parse JSON.\n" + output_text
           else:
             parsed = json.loads(json_text)
             return parsed, chainOfThought
         except json.JSONDecodeError as e:
-          print(f"Warning: Failed to parse JSON response: {e}")
-          print(f"Raw output was: {output_text[:500]}")
-          return {}, chainOfThought + "\n\nDid not output valid JSON.\n" + output_text
+          try:
+            import json_repair
+            repaired = json_repair.repair_json(json_text)
+            return json.loads(repaired), chainOfThought
+          except:
+            print(f"Warning: Failed to parse JSON response: {e}")
+            print(f"Raw output was: {output_text[:500]}")
+            return {}, chainOfThought + "\n\nDid not output valid JSON.\n" + output_text
       return {}, chainOfThought
     else:
       return output_text or "", chainOfThought

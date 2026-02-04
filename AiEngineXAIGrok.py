@@ -280,9 +280,16 @@ def _grok_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, to
         result_dict = parsed_obj.model_dump()
         return result_dict, chainOfThought
       except Exception as e:
-        print(f"Structured parse failed: {e}")
-        print("Model returned:\n" + output_text)
-        return {}, ""
+        try:
+          import json_repair
+          repaired = json_repair.repair_json(parse_text)
+          parsed_obj = pydantic_model.model_validate_json(repaired)
+          result_dict = parsed_obj.model_dump()
+          return result_dict, chainOfThought
+        except:
+          print(f"Structured parse failed: {e}")
+          print("Model returned:\n" + output_text)
+          return {}, f"Structured parse failed: {e}"
     else:
       # Non-structured output - just return the text
       return output_text or "", chainOfThought
