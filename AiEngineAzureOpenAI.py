@@ -207,9 +207,22 @@ def _azure_openai_ai_hook(prompt: str, structure: dict | None, model: str, reaso
 
     # Azure uses deployment name for model
     model_to_use = model
+    reasoning_effort = None
     if isinstance(reasoning, str) and reasoning:
-      # Allow override by deployment name if supplied as a string.
-      model_to_use = reasoning
+      if reasoning in {"minimal", "low", "medium", "high"}:
+        reasoning_effort = reasoning
+      else:
+        # Allow override by deployment name if supplied as a string.
+        model_to_use = reasoning
+    elif isinstance(reasoning, int) and reasoning > 0:
+      if reasoning <= 2:
+        reasoning_effort = "minimal"
+      elif reasoning <= 4:
+        reasoning_effort = "low"
+      elif reasoning <= 7:
+        reasoning_effort = "medium"
+      else:
+        reasoning_effort = "high"
 
     tools_converted = _convert_tools(tools)
 
@@ -250,8 +263,8 @@ def _azure_openai_ai_hook(prompt: str, structure: dict | None, model: str, reaso
 
     response_params = {"model": model_to_use, "input": input_value}
 
-    if isinstance(reasoning, int) and reasoning > 0:
-      response_params["reasoning"] = {"effort": reasoning, "summary": "auto"}
+    if reasoning_effort:
+      response_params["reasoning"] = {"effort": reasoning_effort, "summary": "auto"}
 
     if structure is not None:
       schema = _sanitize_schema_for_azure(structure)
