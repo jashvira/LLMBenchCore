@@ -192,7 +192,7 @@ def build_anthropic_message_params(prompt: str,
     # Deep copy to avoid modifying the original schema
     schema_copy = copy.deepcopy(structure)
     _clean_schema_for_anthropic(schema_copy)
-    message_params["output_format"] = {"type": "json_schema", "schema": schema_copy}
+    message_params["output_config"] = {"format": {"type": "json_schema", "schema": schema_copy}}
 
   # Add thinking configuration if enabled (for supported models)
   if reasoning:
