@@ -112,7 +112,7 @@ class BatchOrchestrator:
     self.model_configs = {cfg["name"]: cfg for cfg in model_configs}
     self.batch_jobs: Dict[str, BatchJob] = {}  # engine_name -> BatchJob
     self.pending_requests: Dict[str, List[BatchRequest]] = {}  # engine_name -> requests
-    self.poll_interval = 60  # seconds between polls
+    self.poll_interval = 300  # seconds between polls
     self.max_poll_time = 24 * 60 * 60  # 24 hours max wait
     self.force_refresh = force_refresh
     self.skipped_cached = 0  # Count of requests skipped due to cache
@@ -215,6 +215,10 @@ class BatchOrchestrator:
       except Exception as e:
         print(f"[Batch] Failed to submit batch for {engine_name}: {e}")
 
+    # Clear pending requests for successfully submitted batches
+    for engine_name in submitted:
+      self.pending_requests[engine_name] = []
+
     return submitted
 
   def poll_all_batches(self, callback=None) -> Dict[str, BatchStatus]:
@@ -285,7 +289,9 @@ class BatchOrchestrator:
               for req in job.requests:
                 if req.custom_id == result.custom_id:
                   if result.success:
-                    self.write_result_to_cache(req, result.result)
+                    # Write as tuple (result, chain_of_thought) to match sync API cache format
+                    cache_value = (result.result, result.chain_of_thought or "")
+                    self.write_result_to_cache(req, cache_value)
                     self.write_result_to_prompt_cache(req, result.result, result.chain_of_thought)
                     print(f"[Batch] Cached result for {result.custom_id}")
                   break

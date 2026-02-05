@@ -561,8 +561,8 @@ Examples:
                       "then process. Uses 50%% cheaper batch APIs where available.")
   parser.add_argument("--batch-poll-interval",
                       type=int,
-                      default=60,
-                      help="Seconds between batch status polls (default: 60)")
+                      default=300,
+                      help="Seconds between batch status polls (default: 300)")
 
   # Allow runner to add custom arguments
   runner.add_arguments(parser)

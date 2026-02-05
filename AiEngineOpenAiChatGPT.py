@@ -75,8 +75,12 @@ def build_openai_input(prompt: str):
   return [{"role": "user", "content": content}]
 
 
-def build_openai_response_params(prompt: str, structure: dict | None, model: str, reasoning,
-                                 tools) -> dict:
+def build_openai_response_params(prompt: str,
+                                 structure: dict | None,
+                                 model: str,
+                                 reasoning,
+                                 tools,
+                                 flex_banned=True) -> dict:
   """
   Build the parameters for an OpenAI Responses API call.
   Used by both the sync hook and batch submission.
@@ -93,7 +97,7 @@ def build_openai_response_params(prompt: str, structure: dict | None, model: str
 
   response_params = {"model": model_to_use, "input": input_value, "service_tier": "flex"}
 
-  if "5.2-pro" in model_to_use:
+  if flex_banned or "5.2-pro" in model_to_use:
     # Flex isn't supported by 5.2-pro
     del response_params["service_tier"]
 
@@ -308,7 +312,12 @@ def submit_batch(config: dict, requests: list) -> str | None:
   jsonl_lines = []
   for req in requests:
     # Use the shared helper to build request params (includes tools, reasoning, structure)
-    body = build_openai_response_params(req.prompt, req.structure, model, reasoning, tools)
+    body = build_openai_response_params(req.prompt,
+                                        req.structure,
+                                        model,
+                                        reasoning,
+                                        tools,
+                                        flex_banned=True)
 
     line = {"custom_id": req.custom_id, "method": "POST", "url": "/v1/responses", "body": body}
     jsonl_lines.append(json.dumps(line))
@@ -353,6 +362,12 @@ def poll_batch(batch_id: str, requests: list) -> tuple:
   results = []
 
   if batch_status.status == "completed":
+    # Check for error file first
+    error_file_id = batch_status.error_file_id
+    if error_file_id:
+      error_content = client.files.content(error_file_id)
+      print(f"[Batch] OpenAI error file contents:\n{error_content.text[:2000]}")
+
     # Download results
     output_file_id = batch_status.output_file_id
     if output_file_id:
@@ -363,6 +378,14 @@ def poll_batch(batch_id: str, requests: list) -> tuple:
       req_map = {r.custom_id: r for r in requests}
 
       print(f"[Batch] OpenAI: Processing {len(lines)} result lines")
+      # Debug: show first line structure
+      if lines and lines[0].strip():
+        first_obj = json.loads(lines[0])
+        print(f"[Batch] OpenAI: First result structure: {list(first_obj.keys())}")
+        if "response" in first_obj:
+          print(f"[Batch] OpenAI: response keys: {list(first_obj['response'].keys())}")
+          if "body" in first_obj["response"]:
+            print(f"[Batch] OpenAI: body keys: {list(first_obj['response']['body'].keys())}")
       for line in lines:
         if not line.strip():
           continue
