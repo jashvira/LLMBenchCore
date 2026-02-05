@@ -25,6 +25,14 @@ from .TestRunner import (
 )
 
 from .CacheLayer import CacheLayer
+from .BatchOrchestrator import (
+  BatchOrchestrator,
+  BatchRequest,
+  BatchResult,
+  BatchJob,
+  BatchStatus,
+  run_batch_mode,
+)
 
 __all__ = [
   'BenchmarkRunner',
@@ -41,4 +49,10 @@ __all__ = [
   'IGNORE_CACHED_FAILURES',
   'FORCE_ARG',
   'CacheLayer',
+  'BatchOrchestrator',
+  'BatchRequest',
+  'BatchResult',
+  'BatchJob',
+  'BatchStatus',
+  'run_batch_mode',
 ]

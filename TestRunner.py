@@ -524,6 +524,8 @@ Examples:
   python <script>.py -m "*-HighReasoning"     # Run all HighReasoning variants
   python <script>.py -t 1 -m gpt-5-nano       # Run test 1 on gpt-5-nano only
   python <script>.py --force -m gpt-5-nano    # Re-run without using cached AI responses
+  python <script>.py --batch                  # Run in batch mode (50%% cheaper, async)
+  python <script>.py --batch -m "gpt-*,claude-*"  # Batch mode for specific models
     """)
 
   parser.add_argument(
@@ -553,6 +555,14 @@ Examples:
   parser.add_argument("--setup",
                       action="store_true",
                       help="Download and build all reference data without running tests.")
+  parser.add_argument("--batch",
+                      action="store_true",
+                      help="Run in batch mode: submit all prompts as batches, poll for results, "
+                      "then process. Uses 50%% cheaper batch APIs where available.")
+  parser.add_argument("--batch-poll-interval",
+                      type=int,
+                      default=60,
+                      help="Seconds between batch status polls (default: 60)")
 
   # Allow runner to add custom arguments
   runner.add_arguments(parser)
@@ -685,6 +695,16 @@ def run_benchmark_main(runner: BenchmarkRunner, script_file: str = None) -> None
 
     model_filter = matched_models
     print(f"Running models: {sorted(model_filter)}")
+
+  # Handle --batch mode
+  if args.batch:
+    from .BatchOrchestrator import run_batch_mode
+    run_batch_mode(runner,
+                   test_filter,
+                   model_filter,
+                   poll_interval=args.batch_poll_interval,
+                   force_mode=args.force)
+    sys.exit(0)
 
   # Run the benchmark
   runner.run(test_filter, model_filter)
@@ -2120,8 +2140,8 @@ def run_model_config(config: dict, test_filter: Optional[Set[int]] = None):
     if not endpoint:
       print(f"Skipping {name}: AZURE_OPENAI_ENDPOINT not set")
       return
-    engine = AzureOpenAIEngine(config["base_model"], config["reasoning"], config["tools"],
-                               endpoint, config.get("api_version"))
+    engine = AzureOpenAIEngine(config["base_model"], config["reasoning"], config["tools"], endpoint,
+                               config.get("api_version"))
     cacheLayer = cl(engine.configAndSettingsHash, engine.AIHook, name)
     runAllTests(cacheLayer.AIHook, name, test_filter)
 

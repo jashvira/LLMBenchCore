@@ -104,6 +104,103 @@ def _build_anthropic_message_content(prompt: str) -> list[dict]:
   return content_blocks
 
 
+def _clean_schema_for_anthropic(schema):
+  """
+  Clean schema properties for Anthropic compatibility.
+  - Sets additionalProperties to false for object types (required by Anthropic)
+  - Removes unsupported properties
+  Modifies the schema in-place.
+  """
+  if isinstance(schema, dict):
+    # For object types, additionalProperties must be explicitly set to false
+    if schema.get("type") == "object":
+      schema["additionalProperties"] = False
+    else:
+      schema.pop("additionalProperties", None)
+    schema.pop("propertyOrdering", None)
+    schema.pop("maximum", None)
+    schema.pop("minimum", None)
+    schema.pop("minItems", None)
+    schema.pop("maxItems", None)
+    for value in schema.values():
+      _clean_schema_for_anthropic(value)
+  elif isinstance(schema, list):
+    for item in schema:
+      _clean_schema_for_anthropic(item)
+
+
+def build_anthropic_message_params(prompt: str,
+                                   structure: dict | None,
+                                   model: str,
+                                   reasoning,
+                                   tools,
+                                   stream: bool = True) -> dict:
+  """
+  Build the parameters for an Anthropic Messages API call.
+  Used by both the sync hook and batch submission.
+  """
+  import copy
+
+  # Get the model's max tokens
+  if "claude-sonnet-4-5" in model:
+    max_tokens = 64000
+  elif "claude-opus-4-5" in model:
+    max_tokens = 64000
+  else:
+    max_tokens = 6400000
+
+  betas = []
+  if tools:
+    betas.append("code-execution-2025-08-25")
+  if structure:
+    betas.append("structured-outputs-2025-11-13")
+
+  content_blocks = _build_anthropic_message_content(prompt)
+
+  # Build message parameters
+  message_params = {
+    "model": model,
+    "max_tokens": max_tokens,
+    "messages": [{
+      "role": "user",
+      "content": content_blocks
+    }]
+  }
+
+  if stream:
+    message_params["stream"] = True
+
+  if len(betas) > 0:
+    message_params["betas"] = betas
+
+  # Add tools if specified
+  if tools is True:
+    # Enable all built-in tools
+    message_params["tools"] = [{
+      "type": "web_search_20250305",
+      "name": "web_search"
+    }, {
+      "type": "code_execution_20250825",
+      "name": "code_execution"
+    }]
+  elif tools and tools is not False:
+    # Custom tools provided
+    message_params["tools"] = tools
+
+  # Handle structured output
+  if structure is not None:
+    # Deep copy to avoid modifying the original schema
+    schema_copy = copy.deepcopy(structure)
+    _clean_schema_for_anthropic(schema_copy)
+    message_params["output_format"] = {"type": "json_schema", "schema": schema_copy}
+
+  # Add thinking configuration if enabled (for supported models)
+  if reasoning:
+    message_params["thinking"] = {"type": "enabled", "budget_tokens": 32768 * reasoning // 10}
+
+  return message_params
+
+
 def _claude_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, tools,
                     prompt_caching: bool) -> tuple:
   """
@@ -119,89 +216,18 @@ def _claude_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, 
   # Initialize the client - it will automatically use ANTHROPIC_API_KEY environment variable
   client = Anthropic()
 
-  # Get the model's max tokens
-  if "claude-sonnet-4-5" in model:
-    max_tokens = 64000
-  elif "claude-opus-4-5" in model:
-    max_tokens = 64000
-  else:
-    max_tokens = 6400000
-
   try:
-    betas = []
-    if tools:
-      betas.append("code-execution-2025-08-25")
-    if structure:
-      betas.append("structured-outputs-2025-11-13")
-
-    content_blocks = _build_anthropic_message_content(prompt)
-
-    # Build message parameters
-    message_params = {
-      "model": model,
-      "max_tokens": max_tokens,
-      "messages": [{
-        "role": "user",
-        "content": content_blocks
-      }],
-      "stream": True
-    }
-
-    if len(betas) > 0:
-      message_params["betas"] = betas
-
-    # Add tools if specified
-    if tools is True:
-      # Enable all built-in tools
-      message_params["tools"] = [{
-        "type": "web_search_20250305",
-        "name": "web_search"
-      }, {
-        "type": "code_execution_20250825",
-        "name": "code_execution"
-      }]
-    elif tools and tools is not False:
-      # Custom tools provided
-      message_params["tools"] = tools
-
-    # Handle structured output using tools (Claude's approach)
-    if structure is not None:
-
-      # For some stupid reason, OpenAI requires "PropertyOrdering",
-      # but Anthropic rejects it completely. Grrr
-      def remove_property_ordering(schema):
-        if isinstance(schema, dict):
-          if "propertyOrdering" in schema:
-            del schema["propertyOrdering"]
-
-          if "maximum" in schema:
-            del schema["maximum"]
-          if "minimum" in schema:
-            del schema["minimum"]
-          if "minItems" in schema:
-            del schema["minItems"]
-          if "maxItems" in schema:
-            del schema["maxItems"]
-          for key, value in schema.items():
-            remove_property_ordering(value)
-        elif isinstance(schema, list):
-          for item in schema:
-            remove_property_ordering(item)
-
-      remove_property_ordering(structure)
-
-      message_params["output_format"] = {"type": "json_schema", "schema": structure}
-
-    # Add thinking configuration if enabled (for supported models)
-    if reasoning:
-      # Extended thinking is enabled via model selection or beta headers
-      # This is model-dependent and may require specific model versions
-      message_params["thinking"] = {"type": "enabled", "budget_tokens": 32768 * reasoning // 10}
+    # Build request parameters using shared helper
+    message_params = build_anthropic_message_params(prompt,
+                                                    structure,
+                                                    model,
+                                                    reasoning,
+                                                    tools,
+                                                    stream=True)
 
     # Handle prompt caching if enabled
     if prompt_caching:
       # Mark content for caching - last content block is typically cached
-      # This requires modifying the content structure
       message_params["messages"][0]["content"][-1]["cache_control"] = {"type": "ephemeral"}
 
     # Make the API call
@@ -257,6 +283,126 @@ def _claude_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, 
       return {}, str(e)
     else:
       return "", str(e)
+
+
+def submit_batch(config: dict, requests: list) -> str | None:
+  """
+  Submit a batch of requests to Anthropic's Message Batches API.
+  
+  Args:
+    config: Model configuration dict with base_model, reasoning, tools
+    requests: List of BatchRequest objects
+    
+  Returns:
+    Batch ID if successful, None otherwise
+  """
+  from anthropic import Anthropic
+
+  client = Anthropic()
+  model = config.get("base_model", "claude-sonnet-4-5")
+  reasoning = config.get("reasoning", False)
+  tools = config.get("tools", False)
+
+  # Build batch requests using the shared helper
+  batch_requests = []
+  for req in requests:
+    # Use the shared helper to build params (includes tools, reasoning, structure, schema cleaning)
+    params = build_anthropic_message_params(req.prompt,
+                                            req.structure,
+                                            model,
+                                            reasoning,
+                                            tools,
+                                            stream=False)
+    batch_requests.append({"custom_id": req.custom_id, "params": params})
+
+  # Create batch
+  batch = client.messages.batches.create(requests=batch_requests)
+  return batch.id
+
+
+def poll_batch(batch_id: str, requests: list) -> tuple:
+  """
+  Poll an Anthropic batch for status and results.
+  
+  Args:
+    batch_id: The batch ID to poll
+    requests: List of original BatchRequest objects (for parsing results)
+    
+  Returns:
+    Tuple of (status_string, list of result dicts)
+    status_string is one of: "completed", "failed", "processing"
+  """
+  from anthropic import Anthropic
+  import json
+
+  client = Anthropic()
+  batch_status = client.messages.batches.retrieve(batch_id)
+
+  results = []
+
+  if batch_status.processing_status == "ended":
+    # Download results
+    req_map = {r.custom_id: r for r in requests}
+
+    for result in client.messages.batches.results(batch_id):
+      custom_id = result.custom_id
+
+      if result.result.type == "succeeded":
+        message = result.result.message
+        text_output = ""
+        cot = ""
+
+        for block in message.content:
+          if block.type == "text":
+            text_output += block.text
+          elif block.type == "thinking":
+            cot += block.thinking + "\n"
+
+        # Parse JSON if structured
+        result_data = text_output
+        req = req_map.get(custom_id)
+        if req and req.structure:
+          try:
+            json_text = text_output.strip()
+            if json_text.startswith("```json"):
+              json_text = json_text[7:]
+            if json_text.startswith("```"):
+              json_text = json_text[3:]
+            if json_text.endswith("```"):
+              json_text = json_text[:-3]
+            result_data = json.loads(json_text.strip())
+          except:
+            pass
+
+        results.append({
+          "custom_id": custom_id,
+          "success": True,
+          "result": result_data,
+          "chain_of_thought": cot.strip(),
+          "error": None
+        })
+      else:
+        results.append({
+          "custom_id": custom_id,
+          "success": False,
+          "result": None,
+          "chain_of_thought": "",
+          "error": str(result.result)
+        })
+
+    return "completed", results
+
+  elif batch_status.processing_status == "canceling":
+    return "failed", results
+
+  else:
+    # Still processing
+    counts = batch_status.request_counts
+    print(
+      f"[Batch] Anthropic batch {batch_id}: {batch_status.processing_status} "
+      f"({counts.succeeded + counts.errored}/{counts.processing + counts.succeeded + counts.errored})"
+    )
+    return "processing", results
 
 
 if __name__ == "__main__":

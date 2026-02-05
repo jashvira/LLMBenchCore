@@ -159,6 +159,30 @@ Return ONLY the JSON object, no markdown formatting, no code blocks, no explanat
   return user_args
 
 
+def build_xai_chat_params(model: str, tools) -> dict:
+  """
+  Build the chat creation parameters for xAI.
+  Used by both the sync hook and batch submission.
+  """
+  chat_params = {"model": model}
+
+  # Add tools if specified
+  if tools is True:
+    from xai_sdk.tools import code_execution as xai_code_execution
+    from xai_sdk.tools import web_search as xai_web_search
+    from xai_sdk.tools import x_search as xai_x_search
+    chat_params["tools"] = [
+      xai_web_search(),
+      xai_x_search(),
+      xai_code_execution(),
+    ]
+  elif tools and tools is not False:
+    if isinstance(tools, list):
+      chat_params["tools"] = tools
+
+  return chat_params
+
+
 def _grok_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, tools) -> tuple:
   """
     This function is called by the test runner to get the AI's response to a prompt.
@@ -177,23 +201,8 @@ def _grok_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, to
     # Initialize the client - uses XAI_API_KEY environment variable
     client = Client(timeout=3600)
 
-    # Build chat creation parameters
-    chat_params = {"model": model}
-
-    # Seems to have been removed from the API after grok-3
-    # Map 0-10 scale to low/medium/high
-    #model_has_builtin_reasoning = "reasoning" in model.lower(
-    #) and "non-reasoning" not in model.lower()
-    #if reasoning and reasoning != 0 and not model_has_builtin_reasoning:
-    #    if isinstance(reasoning, int):
-    #        if reasoning <= 3:
-    #            chat_params["reasoning_effort"] = "low"
-    #        elif reasoning <= 7:
-    #            chat_params["reasoning_effort"] = "medium"
-    #        else:
-    #            chat_params["reasoning_effort"] = "high"
-    #    else:
-    #        chat_params["reasoning_effort"] = "medium"
+    # Build chat creation parameters using shared helper
+    chat_params = build_xai_chat_params(model, tools)
 
     # Convert JSON schema to Pydantic model if provided
     pydantic_model = None
@@ -203,21 +212,6 @@ def _grok_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, to
       except Exception as e:
         print(f"Failed to convert schema to Pydantic: {e}")
         pydantic_model = None
-
-    # Add tools if specified
-    # xAI SDK uses tool objects from xai_sdk.tools
-    if tools is True:
-      from xai_sdk.tools import code_execution as xai_code_execution
-      from xai_sdk.tools import web_search as xai_web_search
-      from xai_sdk.tools import x_search as xai_x_search
-      chat_params["tools"] = [
-        xai_web_search(),
-        xai_x_search(),
-        xai_code_execution(),
-      ]
-    elif tools and tools is not False:
-      if isinstance(tools, list):
-        chat_params["tools"] = tools
 
     # Create chat and add user message
     chat = client.chat.create(**chat_params)
@@ -312,3 +306,139 @@ def _grok_ai_hook(prompt: str, structure: dict | None, model: str, reasoning, to
       time.sleep(random.randint(300, 1800))
 
     return None
+
+
+def submit_batch(config: dict, requests: list) -> str | None:
+  """
+  Submit a batch of requests to xAI's Batch API.
+  
+  Args:
+    config: Model configuration dict with base_model, reasoning, tools
+    requests: List of BatchRequest objects
+    
+  Returns:
+    Batch ID if successful, None otherwise
+  """
+  from xai_sdk import Client
+  from xai_sdk.chat import user as user_msg
+
+  client = Client(timeout=3600)
+  model = config.get("base_model", "grok-3")
+  tools = config.get("tools", False)
+
+  # Create batch with a descriptive name
+  batch = client.batch.create(batch_name=f"LLMBenchCore_{config.get('name', 'batch')}")
+
+  # Build batch requests using Chat objects per xAI SDK docs
+  batch_requests = []
+  for req in requests:
+    # Build user content using existing helper (returns a list of args)
+    user_args = _build_xai_user_args(req.prompt, req.structure)
+
+    # Create a Chat object with batch_request_id
+    chat = client.chat.create(
+      model=model,
+      batch_request_id=req.custom_id,
+    )
+
+    # Add user message - unpack args like sync hook does: user(*user_args)
+    chat.append(user_msg(*user_args))
+
+    batch_requests.append(chat)
+
+  # Add all requests to batch at once
+  client.batch.add(batch_id=batch.batch_id, batch_requests=batch_requests)
+
+  return batch.batch_id
+
+
+def poll_batch(batch_id: str, requests: list) -> tuple:
+  """
+  Poll an xAI batch for status and results.
+  
+  Args:
+    batch_id: The batch ID to poll
+    requests: List of original BatchRequest objects (for parsing results)
+    
+  Returns:
+    Tuple of (status_string, list of result dicts)
+    status_string is one of: "completed", "failed", "processing"
+  """
+  from xai_sdk import Client
+  import json
+
+  client = Client(timeout=3600)
+  batch_status = client.batch.get(batch_id=batch_id)
+
+  results = []
+
+  # Check if all requests are done (num_pending == 0)
+  state = batch_status.state
+  num_pending = state.num_pending if hasattr(state, 'num_pending') else 0
+  num_success = state.num_success if hasattr(state, 'num_success') else 0
+  num_error = state.num_error if hasattr(state, 'num_error') else 0
+
+  if num_pending == 0 and (num_success > 0 or num_error > 0):
+    # Retrieve all results with pagination
+    req_map = {r.custom_id: r for r in requests}
+    pagination_token = None
+
+    while True:
+      page = client.batch.list_batch_results(batch_id=batch_id,
+                                             limit=100,
+                                             pagination_token=pagination_token)
+
+      for result in page.succeeded:
+        custom_id = result.batch_request_id
+        response = result.response
+
+        text_content = response.content if hasattr(response, 'content') else ""
+        cot = response.reasoning_content if hasattr(response, 'reasoning_content') else ""
+
+        # Parse JSON if structured
+        result_data = text_content
+        req = req_map.get(custom_id)
+        if req and req.structure:
+          try:
+            json_text = text_content.strip()
+            if "```json" in json_text:
+              json_text = json_text.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in json_text:
+              json_text = json_text.split("```", 1)[1].split("```", 1)[0]
+            result_data = json.loads(json_text.strip())
+          except:
+            pass
+
+        results.append({
+          "custom_id": custom_id,
+          "success": True,
+          "result": result_data,
+          "chain_of_thought": cot or "",
+          "error": None
+        })
+
+      for result in page.failed:
+        results.append({
+          "custom_id": result.batch_request_id,
+          "success": False,
+          "result": None,
+          "chain_of_thought": "",
+          "error": result.error_message
+        })
+
+      if page.pagination_token is None:
+        break
+      pagination_token = page.pagination_token
+
+    return "completed", results
+
+  elif num_pending == 0 and num_success == 0 and num_error == 0:
+    # Batch exists but no results yet or failed to start
+    return "failed", results
+
+  else:
+    # Still processing
+    total = state.num_requests if hasattr(state, 'num_requests') else 0
+    completed = num_success + num_error
+    print(f"[Batch] xAI batch {batch_id}: {completed}/{total} complete, {num_pending} pending")
+    return "processing", results
