@@ -33,6 +33,27 @@ from .BatchOrchestrator import (
   BatchStatus,
   run_batch_mode,
 )
+from .ResultPaths import (
+  model_root,
+  model_report_path,
+  model_raw_path,
+  model_prompt_path,
+  model_cot_path,
+  model_artifact_dir,
+  model_artifact_path,
+  result_path,
+  report_relpath,
+  legacy_raw_path,
+  legacy_prompt_path,
+  legacy_cot_path,
+  set_current_model,
+  reset_current_model,
+  get_current_model,
+)
+from .CadArtifacts import (
+  CadArtifactStore,
+  write_if_changed,
+)
 
 __all__ = [
   'BenchmarkRunner',
@@ -55,4 +76,21 @@ __all__ = [
   'BatchJob',
   'BatchStatus',
   'run_batch_mode',
+  'model_root',
+  'model_report_path',
+  'model_raw_path',
+  'model_prompt_path',
+  'model_cot_path',
+  'model_artifact_dir',
+  'model_artifact_path',
+  'result_path',
+  'report_relpath',
+  'legacy_raw_path',
+  'legacy_prompt_path',
+  'legacy_cot_path',
+  'set_current_model',
+  'reset_current_model',
+  'get_current_model',
+  'CadArtifactStore',
+  'write_if_changed',
 ]
