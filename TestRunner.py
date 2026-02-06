@@ -876,10 +876,11 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
     # Check saved prompt cache first (before CacheLayer)
     cached_result = checkSavedPromptCache(aiEngineName, index, idx, prompt)
     if cached_result is not None:
+      if structure is None:
+        return cached_result
       if structure is not None:
-        if not isinstance(cached_result, dict):
-          return {}  # don't crash tests expecting json.
-      return cached_result
+        if isinstance(cached_result, dict):
+          return cached_result
 
     try:
       r = aiEngineHook(prompt, structure, index, idx)
@@ -889,8 +890,8 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
       result, chainOfThought = r
     except Exception as e:
       print("Failed to get result for subpass " + str(idx) + " - " + str(e))
-      result = ""
-      chainOfThought = ""
+      result = {"__exception": str(e)}
+      chainOfThought = "Exception was thrown: " + str(e)
 
     try:
       open("results/raw/" + aiEngineName + "_" + str(index) + "_" + str(idx) + ".txt",
@@ -951,7 +952,18 @@ def runTest(index: int, aiEngineHook: callable, aiEngineName: str) -> Dict[str, 
       subpass_data[
         "scoreExplanation"] = f"Content violation: {result.get('reason', 'Policy violation')}"
       subpass_data[
-        "output_nice"] = "<strong style='color:red'>FALSE-POSITIVE CONTENT VIOLATION</strong><br>This prompt was blocked by the AI provider's content policy. (LOL. Sad trombone failure sound. Instant 0.)"
+        "output_nice"] = "<strong style='color:red'>FALSE-POSITIVE CONTENT VIOLATION</strong><br>"\
+          "This prompt was blocked by the AI provider's content policy. (LOL. Sad trombone failure "\
+            "sound. This engine gets a well-deserved instant and eternal 0.)"
+      subpass_data["endProcessingTime"] = time.time()
+      return 0, subpass_data
+
+    if isinstance(result, dict) and result.get("__exception__"):
+      subpass_data["score"] = 0
+      subpass_data["scoreExplanation"] = "Failed 3 times with an exception:"
+      subpass_data[
+        "output_nice"] = f"Exceptions thrown 3 times. Last exception was:<br>"\
+          "{result.get('reason', 'Unknown exception')}"
       subpass_data["endProcessingTime"] = time.time()
       return 0, subpass_data
 

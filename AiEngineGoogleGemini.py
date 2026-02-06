@@ -549,14 +549,14 @@ def submit_batch(config: dict, requests: list) -> str | None:
     # Build config using shared helper
     config_params = build_gemini_config(req.structure, reasoning, tools)
     if config_params:
-      # Convert to batch API format
-      gen_config = {}
+      # Batch API config is flat (not wrapped in generation_config)
+      batch_config = {}
       if 'response_mime_type' in config_params:
-        gen_config['response_mime_type'] = config_params['response_mime_type']
+        batch_config['response_mime_type'] = config_params['response_mime_type']
       if 'response_schema' in config_params:
-        gen_config['response_schema'] = config_params['response_schema']
-      if gen_config:
-        request_obj["config"] = {"generation_config": gen_config}
+        batch_config['response_schema'] = config_params['response_schema']
+      if batch_config:
+        request_obj["config"] = batch_config
 
     inline_requests.append(request_obj)
 
@@ -665,4 +665,16 @@ def poll_batch(batch_id: str, requests: list) -> tuple:
   else:
     # Still processing
     print(f"[Batch] Gemini batch {batch_id}: {state}")
+    # SDK shape varies; avoid assuming batch_stats exists
+    stats = getattr(batch_job, "batch_stats", None)
+    if stats is None:
+      stats = getattr(batch_job, "stats", None)
+    if stats is None:
+      stats = getattr(batch_job, "batchStats", None)
+    if stats is None:
+      stats = getattr(batch_job, "completion_stats", None)
+    if stats is not None:
+      print(f"[Batch] Gemini batch {batch_id}: stats={stats}")
+    else:
+      print(batch_job)
     return "processing", results
